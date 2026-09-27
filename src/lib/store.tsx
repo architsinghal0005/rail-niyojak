@@ -3,7 +3,7 @@
 import React, { createContext, useContext, useReducer, useEffect } from "react";
 
 export * from './schema';
-import { AppState, Block, AuditEvent } from './schema';
+import { AppState, Block, AuditEvent, MaintenanceTask } from './schema';
 import { generateSyntheticData } from './generator';
 
 const initialState: AppState = generateSyntheticData();

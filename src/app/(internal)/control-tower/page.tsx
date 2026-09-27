@@ -16,16 +16,19 @@ export default function Dashboard() {
   const { state, dispatch } = useAppState();
   const router = useRouter();
 
-  const [now, setNow] = useState(new Date());
+  const [now, setNow] = useState<Date | null>(null);
+  const [mounted, setMounted] = useState(false);
 
   useEffect(() => {
+    setMounted(true);
+    setNow(new Date());
     const timer = setInterval(() => setNow(new Date()), 1000);
     return () => clearInterval(timer);
   }, []);
 
   const isHindi = lang === 'hi';
-  const dateStr = now.toLocaleDateString('en-GB', { day: '2-digit', month: 'long', year: 'numeric' });
-  const timeStr = now.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true });
+  const dateStr = mounted && now ? now.toLocaleDateString('en-GB', { day: '2-digit', month: 'long', year: 'numeric' }) : "--";
+  const timeStr = mounted && now ? now.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true }) : "--:--:--";
 
   // Compute dynamic KPIs
   const highRiskTasks = state.tasks.filter(t => {

@@ -197,7 +197,8 @@ export type NotificationType =
   | "EMERGENCY EVENT" 
   | "PLAN REPLANNED" 
   | "TASK OVERDUE" 
-  | "PLAN STARTING SOON";
+  | "PLAN STARTING SOON"
+  | "TASKS QUEUED";
 
 export interface Notification {
   id: string;
@@ -239,6 +240,7 @@ export interface Block {
   trainImpact: string;
   riskCoverage: string;
   utilization: number;
+  remainingCapacity?: number;
   status: BlockStatus;
   reason?: string;
 }
