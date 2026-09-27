@@ -135,7 +135,7 @@ export default function LandingPage() {
       <header className="sticky top-0 z-50 bg-white border-b border-slate-300 shadow-sm">
         <div className="max-w-[1600px] mx-auto px-4 sm:px-8 h-20 flex items-center justify-between">
           <Link href="/" className="flex items-center gap-4 group">
-            <img src={`${process.env.NEXT_PUBLIC_BASE_PATH || ''}/train-logo.png`} alt="RailNiyojak Logo" className="h-12 w-12 object-contain" />
+            <img src="/train-logo.png" alt="RailNiyojak Logo" className="h-12 w-12 object-contain" />
             <div className="flex flex-col">
               <span className="text-[10px] font-bold text-slate-600 uppercase tracking-widest leading-tight">
                 {t("brand.ministry")}<br />{t("brand.govt")}
@@ -145,23 +145,22 @@ export default function LandingPage() {
               </div>
             </div>
           </Link>
-          <div className="flex items-center gap-4">
-            <div className="flex items-center rounded border border-slate-300 bg-slate-50 text-[10px] font-bold uppercase tracking-widest overflow-hidden">
+          <nav className="hidden lg:flex items-center gap-6 text-[11px] font-bold text-slate-700 uppercase tracking-widest">
+            <Link href="/" className="hover:text-red-800 transition-colors">Home</Link>
+            <a href="#how-it-works" className="hover:text-red-800 transition-colors">How It Works</a>
+            
+            <div className="flex items-center rounded border border-slate-300 bg-slate-50 text-[10px] font-bold uppercase tracking-widest overflow-hidden ml-2">
               <button onClick={() => setLang("en")} className={`px-3 py-1.5 transition-colors ${lang === "en" ? "bg-slate-700 text-white" : "text-slate-600 hover:bg-slate-200"}`}>English</button>
               <div className="w-px h-full bg-slate-300"></div>
               <button onClick={() => setLang("hi")} className={`px-3 py-1.5 transition-colors ${lang === "hi" ? "bg-slate-700 text-white" : "text-slate-600 hover:bg-slate-200"}`}>हिंदी</button>
             </div>
-            
-            <nav className="hidden lg:flex items-center gap-6 text-[11px] font-bold text-slate-700 uppercase tracking-widest">
-              <Link href="/" className="hover:text-red-800 transition-colors">Home</Link>
-              <a href="#how-it-works" className="hover:text-red-800 transition-colors">How It Works</a>
-              <Link href="/control-tower" className="hover:text-red-800 transition-colors border-l border-slate-300 pl-6">Control Tower</Link>
-              <span className="bg-amber-100 text-amber-900 px-2 py-0.5 border border-amber-300">Prototype | Synthetic Data</span>
-              <Link href="/control-tower" className="bg-slate-900 text-white px-4 py-2 hover:bg-slate-800 transition-colors border border-slate-700">
-                {t("hero.enter")}
-              </Link>
-            </nav>
-          </div>
+
+            <Link href="/control-tower" className="hover:text-red-800 transition-colors border-l border-slate-300 pl-6">Control Tower</Link>
+            <span className="bg-amber-100 text-amber-900 px-2 py-0.5 border border-amber-300">Prototype | Synthetic Data</span>
+            <Link href="/control-tower" className="bg-slate-900 text-white px-4 py-2 hover:bg-slate-800 transition-colors border border-slate-700">
+              {t("hero.enter")}
+            </Link>
+          </nav>
         </div>
       </header>
 
@@ -170,7 +169,7 @@ export default function LandingPage() {
         <div className="relative w-full min-h-[480px] md:h-[600px] bg-slate-900 flex items-center py-12 md:py-0">
           <div className="absolute inset-0 z-0">
             <img
-              src={`${process.env.NEXT_PUBLIC_BASE_PATH || ''}/train-hero.png`}
+              src="/train-hero.png"
               alt="Vande Bharat Train"
               className="w-full h-full object-cover object-center md:object-right opacity-90"
             />
@@ -262,7 +261,7 @@ export default function LandingPage() {
                 willChange: "transform"
               }}
             >
-              <img src={`${process.env.NEXT_PUBLIC_BASE_PATH || ''}/running-train.png`} alt="Vande Bharat Train" className="w-full h-auto object-contain block" draggable={false} />
+              <img src="/running-train.png" alt="Vande Bharat Train" className="w-full h-auto object-contain block" draggable={false} />
             </div>
 
             <div className="max-w-[1600px] mx-auto relative h-full">
@@ -371,7 +370,7 @@ export default function LandingPage() {
             </div>
           </div>
           <div className="bg-slate-100 h-full min-h-[400px] flex items-center justify-center border-4 border-slate-200 relative overflow-hidden">
-            <img src={`${process.env.NEXT_PUBLIC_BASE_PATH || ''}/train-hero.png`} alt="Railway Track" className="absolute inset-0 w-full h-full object-cover opacity-30 grayscale" />
+            <img src="/train-hero.png" alt="Railway Track" className="absolute inset-0 w-full h-full object-cover opacity-30 grayscale" />
             <div className="z-10 text-center p-6 bg-white shadow-lg border border-slate-300">
               <Database className="w-12 h-12 text-slate-400 mx-auto mb-4" />
               <div className="text-slate-800 font-black tracking-widest">CENTRALIZED MAINTENANCE INTELLIGENCE</div>

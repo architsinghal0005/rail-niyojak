@@ -1,0 +1,16 @@
+{
+  "name": "Rail Niyojak Field Mode",
+  "short_name": "Field Mode",
+  "start_url": "/field-mode",
+  "display": "standalone",
+  "background_color": "#ffffff",
+  "theme_color": "#b91c1c",
+  "description": "Offline-capable railway field staff application.",
+  "icons": [
+    {
+      "src": "/train-logo.png",
+      "sizes": "192x192",
+      "type": "image/png"
+    }
+  ]
+}

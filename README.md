@@ -1,36 +1,34 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Rail Niyojak
 
-## Getting Started
+AI Railway Maintenance Control Tower
 
-First, run the development server:
+SIH Problem Statement: SIH26027
 
-```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
-```
+"Synthetic prototype data — not connected to live Indian Railways systems."
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+## Project Overview
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+Rail Niyojak is an AI-powered integrated railway maintenance and block planning system. It acts as a central control tower to synthesize asset health data, predict optimal maintenance windows, resolve inter-departmental conflicts, and proactively "harvest" related maintenance tasks to maximize the efficiency of track possession hours.
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+## Architecture
 
-## Learn More
+Built using modern web technologies tailored for static deployment:
+- **Framework**: Next.js (App Router, Static Export compatible)
+- **UI & Styling**: Tailwind CSS, Lucide React icons
+- **State Management**: Centralized synthetic state with safe hydration
+- **Language**: English and Hindi localization (Web Speech API optional)
 
-To learn more about Next.js, take a look at the following resources:
+## Major Features
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+- **Block Harvesting**: Automatically identifies and groups overlapping or compatible maintenance tasks within the same corridor to maximize block utilization.
+- **Block Planner**: A comprehensive interface to schedule tasks, resolve train movement conflicts, and generate optimal block window plans.
+- **Maintenance Intelligence**: Calculates dynamic risk scores, priority scores, and urgency tiers based on synthetic telemetry.
+- **Safety/Validation**: Integrated conflict detection prevents assigning conflicting resources, crews, or equipment.
+- **Dynamic Replanning**: Supports emergency simulations and "What-If" scenarios to calculate the impact of deferring critical tasks.
+- **Reports & Audit**: Generates detailed, exportable audit trails and performance metrics (e.g., Future Possession Hours Avoided).
+- **Hindi/English**: Bilingual interface powered by an extensible translation dictionary.
+- **Field Mode**: Lightweight PWA design for local caching and offline status queueing, geared towards field staff in low-connectivity areas.
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+## Deployment
 
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+This repository is configured to deploy directly to GitHub Pages via GitHub Actions as a statically exported Next.js application.
