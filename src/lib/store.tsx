@@ -8,6 +8,24 @@ import { generateSyntheticData } from './generator';
 
 const initialState: AppState = generateSyntheticData();
 
+export const getBlockTasks = (block: Block, allTasks: MaintenanceTask[]) => {
+  return allTasks.filter(t => block.tasks.includes(t.id) || (block.harvestedTasks && block.harvestedTasks.includes(t.id)));
+};
+
+export const calculateAllocatedMinutes = (block: Block, allTasks: MaintenanceTask[]) => {
+  const blockTasks = getBlockTasks(block, allTasks);
+  return blockTasks.reduce((sum, t) => sum + (t.durationMinutes || (t as any).duration || 0), 0);
+};
+
+export const calculateRemainingCapacity = (block: Block, allTasks: MaintenanceTask[]) => {
+  return block.durationMinutes - calculateAllocatedMinutes(block, allTasks);
+};
+
+export const calculateUtilization = (block: Block, allTasks: MaintenanceTask[]) => {
+  const allocated = calculateAllocatedMinutes(block, allTasks);
+  return Math.min(100, Math.round((allocated / block.durationMinutes) * 100));
+};
+
 type Action = 
   | { type: "LOAD_STATE"; payload: AppState }
   | { type: "SELECT_TASK_FOR_PLANNING"; payload: string }
@@ -25,19 +43,29 @@ type Action =
   | { type: "MARK_ALL_NOTIFICATIONS_READ" }
   | { type: "CLEAR_NOTIFICATIONS" }
   | { type: "SET_CURRENT_ROLE"; payload: string }
-  | { type: "CREATE_BLOCK"; payload: Block };
+  | { type: "CREATE_BLOCK"; payload: Block }
+  | { type: "MARK_TASK_STATUS"; payload: { id: string; status: import('./schema').TaskStatus } }
+  | { type: "QUEUE_TASKS_FOR_PLANNING"; payload: string[] }
+  | { type: "SET_CURRENT_BLOCK"; payload: Block | null };
 
 function appReducer(state: AppState, action: Action): AppState {
   switch (action.type) {
     case "SET_CURRENT_ROLE":
       return { ...state, currentUserRole: action.payload };
       
-    case "CREATE_BLOCK":
+    case "SET_CURRENT_BLOCK":
+      return { ...state, currentOptimizationResult: action.payload };
+
+    case "CREATE_BLOCK": {
+      const newBlock = { ...action.payload, utilization: calculateUtilization(action.payload, state.tasks) };
       return { 
         ...state, 
-        blocks: [...state.blocks, action.payload],
-        tasks: state.tasks.map(t => action.payload.tasks.includes(t.id) ? { ...t, status: "SCHEDULED" } : t)
+        blocks: [...state.blocks, newBlock],
+        currentOptimizationResult: newBlock,
+        tasks: state.tasks.map(t => newBlock.tasks.includes(t.id) ? { ...t, status: "SCHEDULED" } : t),
+        selectedTasksForPlanning: state.selectedTasksForPlanning.filter(id => !newBlock.tasks.includes(id))
       };
+    }
 
     case "LOAD_STATE":
       return {
@@ -101,6 +129,19 @@ function appReducer(state: AppState, action: Action): AppState {
         tasks: state.tasks.map(t => t.id === action.payload ? { ...t, status: "PENDING" } : t)
       };
 
+    case "MARK_TASK_STATUS":
+      return {
+        ...state,
+        tasks: state.tasks.map(t => t.id === action.payload.id ? { ...t, status: action.payload.status } : t)
+      };
+      
+    case "QUEUE_TASKS_FOR_PLANNING":
+      return {
+        ...state,
+        selectedTasksForPlanning: [...state.selectedTasksForPlanning, ...action.payload.filter(id => !state.selectedTasksForPlanning.includes(id))],
+        tasks: state.tasks.map(t => action.payload.includes(t.id) ? { ...t, status: "SCHEDULED" } : t)
+      };
+
     case "OPTIMIZE_BLOCK":
       return {
         ...state,
@@ -142,17 +183,7 @@ function appReducer(state: AppState, action: Action): AppState {
       };
 
       // Recalculate utilization
-      let totalTime = 0;
-      updatedBlock.tasks.forEach(tid => {
-        const t = state.tasks.find(x => x.id === tid);
-        if (t) totalTime += t.duration;
-      });
-      updatedBlock.harvestedTasks.forEach(tid => {
-        const t = state.tasks.find(x => x.id === tid);
-        if (t) totalTime += t.duration;
-      });
-      
-      updatedBlock.utilization = Math.min(100, Math.round((totalTime / updatedBlock.durationMinutes) * 100));
+      updatedBlock.utilization = calculateUtilization(updatedBlock, state.tasks);
 
       return {
         ...state,
@@ -174,12 +205,7 @@ function appReducer(state: AppState, action: Action): AppState {
         harvestedTasks: block.harvestedTasks.filter(id => id !== taskId)
       };
 
-      let totalTime = 0;
-      [...updatedBlock.tasks, ...updatedBlock.harvestedTasks].forEach(tid => {
-        const t = state.tasks.find(x => x.id === tid);
-        if (t) totalTime += t.duration;
-      });
-      updatedBlock.utilization = Math.min(100, Math.round((totalTime / updatedBlock.durationMinutes) * 100));
+      updatedBlock.utilization = calculateUtilization(updatedBlock, state.tasks);
 
       return {
         ...state,
@@ -208,7 +234,7 @@ function appReducer(state: AppState, action: Action): AppState {
       };
 
     case "RESET_DEMO":
-      return initialState;
+      return generateSyntheticData();
 
     default:
       return state;
@@ -225,7 +251,7 @@ export function AppStateProvider({ children }: { children: React.ReactNode }) {
   const [isLoaded, setIsLoaded] = React.useState(false);
 
   useEffect(() => {
-    const savedState = localStorage.getItem("railniyojak_state");
+    const savedState = localStorage.getItem("railniyojak_state_v2");
     if (savedState) {
       try {
         const parsed = JSON.parse(savedState);
@@ -239,7 +265,7 @@ export function AppStateProvider({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     if (isLoaded) {
-      localStorage.setItem("railniyojak_state", JSON.stringify(state));
+      localStorage.setItem("railniyojak_state_v2", JSON.stringify(state));
     }
   }, [state, isLoaded]);
 

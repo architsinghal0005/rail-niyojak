@@ -2,7 +2,7 @@
 import { useTranslation } from "@/lib/i18n";
 
 import { useState } from "react";
-import { useAppState } from "@/lib/store";
+import { useAppState, calculateAllocatedMinutes, calculateRemainingCapacity, calculateUtilization } from "@/lib/store";
 import { 
   SectionHeader, GovernmentCard, 
   GovernmentButton, MetricCard, InfoPanel, StatusBadge 
@@ -37,13 +37,13 @@ export default function HarvestingPage() {
   }
 
   const baseTasks = state.tasks.filter(t => block.tasks.includes(t.id));
-  const harvestedTasks = state.tasks.filter(t => block.harvestedTasks.includes(t.id));
+  const baseDuration = baseTasks.reduce((sum, t) => sum + (t.durationMinutes || (t as any).duration || 0), 0);
+  const harvestedTasks = block.harvestedTasks ? state.tasks.filter(t => block.harvestedTasks.includes(t.id)) : [];
+  const harvestedDuration = harvestedTasks.reduce((sum, t) => sum + (t.durationMinutes || (t as any).duration || 0), 0);
   
-  const baseDuration = baseTasks.reduce((acc, t) => acc + t.duration, 0);
-  const harvestedDuration = harvestedTasks.reduce((acc, t) => acc + t.duration, 0);
-  const allocated = baseDuration + harvestedDuration;
-  const available = block.durationMinutes - allocated;
-  const utilization = Math.min(100, Math.round((allocated / block.durationMinutes) * 100));
+  const allocated = calculateAllocatedMinutes(block, state.tasks);
+  const available = calculateRemainingCapacity(block, state.tasks);
+  const utilization = calculateUtilization(block, state.tasks);
 
   const isHarvested = harvestedTasks.length > 0;
 
@@ -54,15 +54,20 @@ export default function HarvestingPage() {
   ).sort((a, b) => b.duration - a.duration);
 
   const handleHarvest = () => {
+    if (available < 0) {
+      alert("Capacity exceeded. Cannot harvest tasks.");
+      return;
+    }
     setIsHarvesting(true);
     setTimeout(() => {
       // Find tasks that fit
       let currentAvailable = available;
       const tasksToHarvest: string[] = [];
       for (const c of candidates) {
-        if (c.duration <= currentAvailable) {
+        const cDuration = c.durationMinutes || (c as any).duration || 0;
+        if (cDuration <= currentAvailable) {
           tasksToHarvest.push(c.id);
-          currentAvailable -= c.duration;
+          currentAvailable -= cDuration;
         }
       }
 
@@ -117,8 +122,8 @@ export default function HarvestingPage() {
               <div className="text-sm font-bold text-slate-900">{allocated} min</div>
             </div>
             <div className="text-center border-l border-slate-300 pl-4">
-              <div className="text-[10px] uppercase font-bold text-emerald-700">Available</div>
-              <div className="text-sm font-bold text-emerald-600">{available} min</div>
+              <div className={`text-[10px] uppercase font-bold ${available < 0 ? 'text-red-700' : 'text-emerald-700'}`}>Available</div>
+              <div className={`text-sm font-bold ${available < 0 ? 'text-red-600' : 'text-emerald-600'}`}>{available < 0 ? "CAPACITY EXCEEDED" : `${available} min`}</div>
             </div>
             <div className="text-center border-l border-slate-300 pl-4">
               <div className="text-[10px] uppercase font-bold text-slate-500">Utilization</div>

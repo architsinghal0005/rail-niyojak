@@ -1,6 +1,7 @@
 "use client";
+import { useState, useEffect } from "react";
 import { useTranslation } from "@/lib/i18n";
-import { useAppState } from "@/lib/store";
+import { useAppState, calculateAllocatedMinutes, calculateRemainingCapacity } from "@/lib/store";
 import { calculatePriority, detectAnomalies } from "@/lib/intelligence";
 import { useRouter } from "next/navigation";
 import { 
@@ -11,9 +12,20 @@ import { Info, CheckCircle } from "lucide-react";
 import { NetworkMapContent } from "../network-map/page";
 
 export default function Dashboard() {
-  const { t } = useTranslation();
+  const { t, lang } = useTranslation();
   const { state, dispatch } = useAppState();
   const router = useRouter();
+
+  const [now, setNow] = useState(new Date());
+
+  useEffect(() => {
+    const timer = setInterval(() => setNow(new Date()), 1000);
+    return () => clearInterval(timer);
+  }, []);
+
+  const isHindi = lang === 'hi';
+  const dateStr = now.toLocaleDateString('en-GB', { day: '2-digit', month: 'long', year: 'numeric' });
+  const timeStr = now.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true });
 
   // Compute dynamic KPIs
   const highRiskTasks = state.tasks.filter(t => {
@@ -25,26 +37,20 @@ export default function Dashboard() {
     Math.round(state.blocks.reduce((acc, b) => acc + b.utilization, 0) / state.blocks.length) : 0;
   
   const futurePossAvoidedHours = state.blocks.reduce((acc, block) => {
-    return acc + block.harvestedTasks.reduce((sum, tid) => {
+    return acc + (block.harvestedTasks || []).reduce((sum, tid) => {
       const task = state.tasks.find(t => t.id === tid);
-      return sum + (task ? task.duration : 0);
+      return sum + (task ? (task.durationMinutes || (task as any).duration || 0) : 0);
     }, 0) / 60;
   }, 0).toFixed(1);
 
   const blockToDisplay = state.blocks.length > 0 ? state.blocks[state.blocks.length - 1] : null;
 
   let allocated = 0;
+  let remaining = 0;
   if (blockToDisplay) {
-    blockToDisplay.tasks.forEach(tid => {
-      const t = state.tasks.find(x => x.id === tid);
-      if (t) allocated += t.duration;
-    });
-    blockToDisplay.harvestedTasks.forEach(tid => {
-      const t = state.tasks.find(x => x.id === tid);
-      if (t) allocated += t.duration;
-    });
+    allocated = calculateAllocatedMinutes(blockToDisplay, state.tasks);
+    remaining = calculateRemainingCapacity(blockToDisplay, state.tasks);
   }
-  const remaining = blockToDisplay ? blockToDisplay.durationMinutes - allocated : 0;
 
   const handleApprove = () => {
     if (state.currentOptimizationResult) {
@@ -70,10 +76,12 @@ export default function Dashboard() {
         title={t("page.control_tower.title")} 
         description="Integrated Railway Maintenance & Block Planning" 
         action={
-          <div className="text-right text-xs">
-            <div className="font-bold text-slate-800">Division: Kota Division</div>
+          <div className="text-right text-[10px] leading-tight space-y-0.5">
+            <div className="font-bold text-slate-800 text-xs">Division: Kota Division</div>
             <div className="text-slate-600">Planning Date: 24 September 2026</div>
-            <div className="text-amber-700 font-bold mt-1 uppercase tracking-tight">Data Status: Synthetic Prototype Data</div>
+            <div className="text-slate-600">{isHindi ? 'वर्तमान दिनांक' : 'Current Date'}: <span className="font-mono">{dateStr}</span></div>
+            <div className="text-slate-600">{isHindi ? 'वर्तमान समय' : 'Current Time'}: <span className="font-mono">{timeStr}</span></div>
+            <div className="text-amber-700 font-bold pt-1 uppercase tracking-tight">DATA STATUS: SYNTHETIC PROTOTYPE DATA</div>
           </div>
         }
       />

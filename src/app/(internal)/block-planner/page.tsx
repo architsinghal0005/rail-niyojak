@@ -32,12 +32,26 @@ export default function BlockPlannerPage() {
   const { state, dispatch } = useAppState();
   const { canCreateBlock, canApprove, hasPermission, currentRoleName } = useRBAC();
   const [selectedBlock, setSelectedBlock] = useState<Block | null>(null);
-  const [horizon, setHorizon] = useState<"DAILY" | "WEEKLY" | "MONTHLY" | "REQUESTS">("DAILY");
+  const [viewMode, setViewMode] = useState<"GANTT" | "TABLE">("GANTT");
+  const [horizon, setHorizon] = useState<"DAILY" | "WEEKLY" | "MONTHLY">("DAILY");
+  const [shiftWindow, setShiftWindow] = useState<"24H" | "NIGHT" | "MORNING" | "MIDDAY" | "EVENING">("24H");
+  
+  const [searchQuery, setSearchQuery] = useState("");
+  const [deptFilter, setDeptFilter] = useState("All Departments");
+  const [corridorFilter, setCorridorFilter] = useState("All Corridors");
+  const [statusFilter, setStatusFilter] = useState("All Status");
+  
+  const [isOptimizing, setIsOptimizing] = useState(false);
+  const [optimizationStep, setOptimizationStep] = useState(0);
+  
   const [selectedRequest, setSelectedRequest] = useState<BlockRequest | null>(null);
   
   const [showCreateForm, setShowCreateForm] = useState(false);
   const [createForm, setCreateForm] = useState({ date: "2026-09-30", startTime: "02:00", endTime: "05:00", corridor: CORRIDORS[0] });
   const [createValidation, setCreateValidation] = useState<{valid: boolean, error?: string} | null>(null);
+  
+  const [isModifyingBlock, setIsModifyingBlock] = useState(false);
+  const [editBlockForm, setEditBlockForm] = useState<any>(null);
   
   useEffect(() => {
     if (selectedBlock) {
@@ -133,22 +147,49 @@ export default function BlockPlannerPage() {
     }
   };
 
-  const handleHarvest = () => {
-    if (!selectedBlock) return;
-    const candidates = state.tasks.filter(t => t.status === "PENDING" && t.harvestable).slice(0, 2);
-    if (candidates.length === 0) {
-      alert("No harvestable tasks available.");
+  const handleReject = () => {
+    const reason = window.prompt("Mandatory: Enter rejection reason:");
+    if (!reason || reason.trim() === "") {
+      alert("Reason is required for rejection.");
       return;
     }
-    const candidateIds = candidates.map(t => t.id);
-    dispatch({ type: "HARVEST_TASKS", payload: { blockId: selectedBlock.id, taskIds: candidateIds }});
+    handleUpdateStatus("REJECTED");
+  };
+
+  const handleModifySubmit = () => {
+    if (!editBlockForm) return;
+    const duration = parseTime(editBlockForm.endTime) - parseTime(editBlockForm.startTime);
+    if (duration <= 0) {
+      alert("End time must be after start time.");
+      return;
+    }
+    if (duration > 240) {
+      alert("Duration exceeds allowed maximum (240 mins).");
+      return;
+    }
+    
+    // Create updated block
+    const updated = {
+      ...selectedBlock!,
+      date: editBlockForm.date,
+      startTime: editBlockForm.startTime,
+      endTime: editBlockForm.endTime,
+      durationMinutes: duration,
+      utilization: Math.min(100, Math.round((selectedBlock!.tasks.length * 45 / duration) * 100)),
+      remainingCapacity: duration - (selectedBlock!.tasks.length * 45)
+    };
+    
+    const newBlocks = state.blocks.map(b => b.id === updated.id ? updated : b);
+    dispatch({ type: "LOAD_STATE", payload: { ...state, blocks: newBlocks } });
+    setSelectedBlock(updated);
+    setIsModifyingBlock(false);
     
     dispatch({ type: "ADD_AUDIT_EVENT", payload: {
-      event: "TASKS_HARVESTED",
-      entity: selectedBlock.id,
-      previousState: selectedBlock.status,
-      newState: selectedBlock.status,
-      reason: `Harvested ${candidateIds.length} tasks into existing block.`,
+      event: "BLOCK_MODIFIED",
+      entity: updated.id,
+      previousState: updated.status,
+      newState: updated.status,
+      reason: "Manual modification of block parameters.",
       user: "Control Officer"
     }});
   };
@@ -334,19 +375,180 @@ export default function BlockPlannerPage() {
     setSelectedRequest(updatedRequest);
   };
 
+  const handleOptimize = () => {
+    if (state.selectedTasksForPlanning.length === 0) {
+      alert("Please select tasks from Maintenance Tasks first to run optimization.");
+      return;
+    }
+    setIsOptimizing(true);
+    setOptimizationStep(0);
+    
+    // Simulate steps
+    const steps = [
+      "Reading tasks...",
+      "Checking train windows...",
+      "Checking resources...",
+      "Optimizing block...",
+      "Generating recommendation..."
+    ];
+    
+    let currentStep = 0;
+    const interval = setInterval(() => {
+      currentStep++;
+      setOptimizationStep(currentStep);
+      
+      if (currentStep >= steps.length) {
+        clearInterval(interval);
+        setTimeout(() => {
+          setIsOptimizing(false);
+          
+          const selTasks = state.tasks.filter(t => state.selectedTasksForPlanning.includes(t.id));
+          const departments = Array.from(new Set(selTasks.map(t => t.department)));
+          
+          const newBlock: Block = {
+            id: `OPT-${Date.now().toString().slice(-5)}`,
+            corridor: CORRIDORS[0],
+            date: "2026-09-30",
+            startTime: "02:00",
+            endTime: "05:00", 
+            durationMinutes: 180, 
+            departments,
+            tasks: state.selectedTasksForPlanning,
+            harvestedTasks: [],
+            trainImpact: "Low",
+            riskCoverage: "High",
+            utilization: 85,
+            status: "PROPOSED",
+            reason: "AI Optimized Block Recommendation."
+          };
+          
+          dispatch({ type: "CREATE_BLOCK", payload: newBlock });
+          
+          dispatch({ type: "ADD_AUDIT_EVENT", payload: {
+            event: "BLOCK_OPTIMIZED",
+            entity: newBlock.id,
+            previousState: "-",
+            newState: "PROPOSED",
+            reason: `AI optimized block for ${selTasks.length} tasks.`,
+            user: "Optimization Engine"
+          }});
+          
+          alert("Optimization Complete! New block proposed in the matrix.");
+        }, 500);
+      }
+    }, 800);
+  };
+
+  const filteredBlocks = state.blocks.filter(b => {
+    if (searchQuery) {
+      const q = searchQuery.toLowerCase();
+      if (!b.id.toLowerCase().includes(q) && !b.tasks.some(t => t.toLowerCase().includes(q)) && !b.corridor.toLowerCase().includes(q)) return false;
+    }
+    if (shiftWindow !== "24H") {
+      const h = parseInt(b.startTime.split(':')[0], 10);
+      if (shiftWindow === "NIGHT" && (h < 0 || h >= 6)) return false;
+      if (shiftWindow === "MORNING" && (h < 6 || h >= 12)) return false;
+      if (shiftWindow === "MIDDAY" && (h < 12 || h >= 18)) return false;
+      if (shiftWindow === "EVENING" && (h < 18 || h >= 24)) return false;
+    }
+    if (deptFilter !== "All Departments") {
+      if (deptFilter === "Integrated" && b.departments.length <= 1) return false;
+      if (deptFilter !== "Integrated" && !(b.departments.length === 1 && b.departments.includes(deptFilter))) return false;
+    }
+    if (corridorFilter !== "All Corridors" && b.corridor.toUpperCase() !== corridorFilter) return false;
+    if (statusFilter !== "All Status" && b.status !== statusFilter) return false;
+    return true;
+  });
+
   return (
     <div className="space-y-4 pb-12">
-      <InternalTabs tabs={[
-        { name: "Daily", href: "#", onClick: () => setHorizon("DAILY"), active: horizon === "DAILY" },
-        { name: "Weekly", href: "#", onClick: () => setHorizon("WEEKLY"), active: horizon === "WEEKLY" },
-        { name: "Monthly", href: "#", onClick: () => setHorizon("MONTHLY"), active: horizon === "MONTHLY" },
-        { name: "Requests", href: "#", onClick: () => setHorizon("REQUESTS"), active: horizon === "REQUESTS" }
-      ]} />
+      {/* STANDARD RAIL NIYOJAK HEADER */}
+      <div className="flex justify-between items-center bg-white p-4 border-b border-slate-200">
+        <div>
+          <div className="text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1">Rail Niyojak &gt; Block Planner</div>
+          <h1 className="text-xl font-bold text-[#1e293b]">POSSESSION PLANNING WORKSTATION</h1>
+        </div>
+        <div className="flex bg-slate-100 rounded-sm p-1 border border-slate-200 shadow-sm">
+          <button onClick={() => setHorizon("DAILY")} className={`px-4 py-1.5 text-xs font-bold rounded-sm transition-colors ${horizon === 'DAILY' ? 'bg-white text-[#1e293b] shadow border border-slate-200' : 'text-slate-600 hover:bg-slate-200'}`}>DAILY</button>
+          <button onClick={() => setHorizon("WEEKLY")} className={`px-4 py-1.5 text-xs font-bold rounded-sm transition-colors ${horizon === 'WEEKLY' ? 'bg-white text-[#1e293b] shadow border border-slate-200' : 'text-slate-600 hover:bg-slate-200'}`}>WEEKLY</button>
+          <button onClick={() => setHorizon("MONTHLY")} className={`px-4 py-1.5 text-xs font-bold rounded-sm transition-colors ${horizon === 'MONTHLY' ? 'bg-white text-[#1e293b] shadow border border-slate-200' : 'text-slate-600 hover:bg-slate-200'}`}>MONTHLY</button>
+        </div>
+      </div>
+
+      {/* FILTER BAR */}
+      <div className="px-4 flex flex-col md:flex-row gap-4 justify-between items-start md:items-end">
+        <div className="flex flex-wrap gap-4 p-3 bg-[#f8fafc] border border-slate-200 rounded-sm flex-1">
+          <input 
+            type="text" 
+            placeholder="Search schedule ID, task..."
+            className="w-48 border border-slate-300 rounded-sm px-3 py-1.5 text-sm outline-none focus:ring-1 focus:ring-[#1e293b]"
+            value={searchQuery}
+            onChange={e => setSearchQuery(e.target.value)}
+          />
+          <select 
+            className="w-48 border border-slate-300 rounded-sm px-3 py-1.5 text-sm bg-white outline-none focus:ring-1 focus:ring-[#1e293b]"
+            value={deptFilter}
+            onChange={e => setDeptFilter(e.target.value)}
+          >
+            <option value="All Departments">All Departments</option>
+            <option value="Engineering">Engineering</option>
+            <option value="S&T">S&T</option>
+            <option value="TRD">TRD</option>
+            <option value="Integrated">Multi-Dept (Coordinated)</option>
+          </select>
+          <select 
+            className="w-48 border border-slate-300 rounded-sm px-3 py-1.5 text-sm bg-white outline-none focus:ring-1 focus:ring-[#1e293b]"
+            value={corridorFilter}
+            onChange={e => setCorridorFilter(e.target.value)}
+          >
+            <option value="All Corridors">All Corridors</option>
+            {CORRIDORS.map(c => <option key={c} value={c}>{c}</option>)}
+          </select>
+          <select 
+            className="w-32 border border-slate-300 rounded-sm px-3 py-1.5 text-sm bg-white outline-none focus:ring-1 focus:ring-[#1e293b]"
+            value={statusFilter}
+            onChange={e => setStatusFilter(e.target.value)}
+          >
+            <option value="All Status">All Status</option>
+            <option value="PROPOSED">Proposed</option>
+            <option value="APPROVED">Approved</option>
+            <option value="ACTIVE">Active</option>
+            <option value="COMPLETED">Completed</option>
+          </select>
+        </div>
+        <div className="flex gap-2">
+          <GovernmentButton variant="primary" className="bg-[#b91c1c] hover:bg-red-800 text-white border-[#b91c1c]" onClick={handleOptimize} disabled={isOptimizing}>
+            {isOptimizing ? "RUNNING..." : "RUN OPTIMIZATION"}
+          </GovernmentButton>
+          <GovernmentButton variant="outline" className="bg-white hover:bg-slate-50 border-slate-300">
+            EXPORT
+          </GovernmentButton>
+        </div>
+      </div>
       
-      <SectionHeader 
-        title={horizon === "REQUESTS" ? "Block Requests Inbox" : "Possession Planning Workstation"}
-        description={horizon === "REQUESTS" ? "Review and approve departmental block requests" : `Horizon: ${horizon === "DAILY" ? "24 HOURS" : horizon === "WEEKLY" ? "7 DAYS" : "30 DAYS"}`}
-      />
+      <div className="text-sm font-semibold text-slate-600 px-4">
+        {filteredBlocks.length} active block sessions
+      </div>
+
+      {/* RESOURCE UTILIZATION PANEL */}
+      <div className="grid grid-cols-4 gap-4 px-4">
+        <GovernmentCard className="p-3 text-center border-slate-300 bg-white">
+          <div className="text-[10px] font-bold uppercase text-slate-500">Engineering Crew</div>
+          <div className="text-xl font-bold text-[#1e293b]">78%</div>
+        </GovernmentCard>
+        <GovernmentCard className="p-3 text-center border-slate-300 bg-white">
+          <div className="text-[10px] font-bold uppercase text-slate-500">S&T Crew</div>
+          <div className="text-xl font-bold text-[#1e293b]">64%</div>
+        </GovernmentCard>
+        <GovernmentCard className="p-3 text-center border-slate-300 bg-white">
+          <div className="text-[10px] font-bold uppercase text-slate-500">TRD Crew</div>
+          <div className="text-xl font-bold text-[#1e293b]">82%</div>
+        </GovernmentCard>
+        <GovernmentCard className="p-3 text-center border-slate-300 bg-white">
+          <div className="text-[10px] font-bold uppercase text-slate-500">Machines</div>
+          <div className="text-xl font-bold text-[#1e293b]">71%</div>
+        </GovernmentCard>
+      </div>
 
       {state.selectedTasksForPlanning.length > 0 && (
         <GovernmentCard className="p-4 border-l-4 border-l-indigo-600 bg-indigo-50">
@@ -407,53 +609,7 @@ export default function BlockPlannerPage() {
         </GovernmentCard>
       )}
 
-      {horizon === "REQUESTS" ? (
-        <GovernmentCard className="p-0 overflow-hidden border border-slate-300">
-          <div className="p-3 bg-slate-50 border-b border-slate-300 flex justify-between items-center">
-            <div className="font-bold text-slate-800 text-sm">PENDING APPROVALS</div>
-          </div>
-          <div className="p-4 space-y-4">
-            {(state.blockRequests || []).map(req => (
-              <div key={req.id} onClick={() => setSelectedRequest(req)} className="border border-slate-200 p-3 rounded-sm cursor-pointer hover:bg-slate-50 transition-colors flex justify-between items-center">
-                <div>
-                  <div className="font-bold text-slate-800 text-sm flex items-center gap-2">
-                    {req.id} 
-                    <StatusBadge status={req.status === 'APPROVED' ? 'success' : req.status === 'REJECTED' ? 'danger' : 'warning'}>{req.status}</StatusBadge>
-                  </div>
-                  <div className="text-xs text-slate-600 mt-1">{req.department} | {req.corridor} | {req.section}</div>
-                </div>
-                <div className="text-right">
-                  <div className="text-xs font-bold text-slate-500 uppercase">Priority</div>
-                  <div className="text-sm font-bold text-red-700">{req.priority}</div>
-                </div>
-              </div>
-            ))}
-            {state.blockRequests.length === 0 && (
-              <div className="text-center text-slate-500 text-sm py-8 font-semibold">No block requests found.</div>
-            )}
-          </div>
-        </GovernmentCard>
-      ) : (
-        <>
-          {/* RESOURCE UTILIZATION PANEL */}
-          <div className="grid grid-cols-4 gap-4 mb-4">
-            <GovernmentCard className="p-3 text-center border-slate-300">
-          <div className="text-[10px] font-bold uppercase text-slate-500">Engineering Crew</div>
-          <div className="text-xl font-bold text-slate-800">78%</div>
-        </GovernmentCard>
-        <GovernmentCard className="p-3 text-center border-slate-300">
-          <div className="text-[10px] font-bold uppercase text-slate-500">S&T Crew</div>
-          <div className="text-xl font-bold text-slate-800">64%</div>
-        </GovernmentCard>
-        <GovernmentCard className="p-3 text-center border-slate-300">
-          <div className="text-[10px] font-bold uppercase text-slate-500">TRD Crew</div>
-          <div className="text-xl font-bold text-slate-800">82%</div>
-        </GovernmentCard>
-        <GovernmentCard className="p-3 text-center border-slate-300">
-          <div className="text-[10px] font-bold uppercase text-slate-500">Machines</div>
-          <div className="text-xl font-bold text-slate-800">71%</div>
-        </GovernmentCard>
-      </div>
+    
 
       <GovernmentCard className="p-0 overflow-hidden border border-slate-300">
         <div className="p-3 bg-slate-50 border-b border-slate-300 flex justify-between items-center">
@@ -492,14 +648,14 @@ export default function BlockPlannerPage() {
                 style={{ left: `calc(${nowPos}% - 0px)` }}
               />
 
-              {CORRIDORS.map((corridor, cIdx) => (
+              {CORRIDORS.filter(c => corridorFilter === "All Corridors" || c === corridorFilter).map((corridor, cIdx) => (
                 <div key={corridor} className="border-b border-slate-300 last:border-b-0">
                   <div className="bg-slate-200 text-slate-800 text-xs font-bold py-1 px-2 border-b border-slate-300 uppercase">
                     {corridor}
                   </div>
                   {DEPARTMENTS.map(dept => {
                     // Filter blocks for this corridor and department
-                    const rowBlocks = state.blocks.filter(b => {
+                    const rowBlocks = filteredBlocks.filter(b => {
                       const matchesCorridor = b.corridor.toUpperCase() === corridor || (corridor === "KOTA-ITARSI" && b.corridor === "KOTA-ITARSI");
                       if (!matchesCorridor) return false;
                       
@@ -511,8 +667,8 @@ export default function BlockPlannerPage() {
                     });
 
                     return (
-                      <div key={dept} className="flex h-10 border-b border-slate-100 last:border-b-0 relative hover:bg-slate-50 transition-colors">
-                        <div className="w-32 flex-shrink-0 border-r border-slate-300 flex items-center px-2 text-[10px] font-bold text-slate-600 bg-slate-50">
+                      <div key={dept} className="flex h-20 border-b border-slate-100 last:border-b-0 relative hover:bg-slate-50 transition-colors">
+                        <div className="w-32 flex-shrink-0 border-r border-slate-300 flex items-center px-3 text-[10px] font-bold text-slate-600 bg-slate-50">
                           {dept}
                         </div>
                         <div className="flex-1 relative">
@@ -531,17 +687,56 @@ export default function BlockPlannerPage() {
                             </div>
                           )}
 
-                          {/* Render Blocks */}
-                          {rowBlocks.map(block => (
-                            <div
-                              key={block.id}
-                              onClick={() => setSelectedBlock(block)}
-                              className={`absolute top-1.5 bottom-1.5 border rounded-sm text-[10px] font-bold px-1.5 py-0.5 overflow-hidden cursor-pointer hover:brightness-95 transition-all shadow-sm ${getStatusColor(block.status)}`}
-                              style={{ left: `${getLeft(block.startTime)}%`, width: `${getWidth(block.durationMinutes)}%` }}
-                            >
-                              <div className="truncate">{block.id}</div>
-                            </div>
-                          ))}
+                          {/* Render Blocks as Professional Planning Cards */}
+                          {rowBlocks.map(block => {
+                            const isSelected = selectedBlock?.id === block.id;
+                            
+                            return (
+                              <div
+                                key={block.id}
+                                onClick={() => { setSelectedBlock(block); dispatch({ type: "SET_CURRENT_BLOCK", payload: block }); }}
+                                className={`absolute top-1 bottom-1 border rounded-sm overflow-hidden cursor-pointer transition-all flex flex-col ${
+                                  isSelected ? 'ring-2 ring-indigo-600 shadow-md z-10' : 'hover:shadow-md hover:border-slate-400 z-0'
+                                } ${
+                                  block.status === 'APPROVED' ? 'bg-[#f0fdf4] border-[#86efac]' :
+                                  block.status === 'PROPOSED' ? 'bg-[#f0f9ff] border-[#bae6fd]' :
+                                  block.status === 'ACTIVE' ? 'bg-[#fef2f2] border-[#fca5a5]' :
+                                  'bg-white border-slate-300 shadow-sm'
+                                }`}
+                                style={{ left: `${getLeft(block.startTime)}%`, width: `${getWidth(block.durationMinutes)}%` }}
+                              >
+                                <div className="p-1.5 flex flex-col justify-center h-full text-[9px] leading-[1.2] whitespace-nowrap overflow-hidden">
+                                  {/* Header: ID + Status */}
+                                  <div className="flex justify-between items-center overflow-hidden gap-1 mb-0.5">
+                                    <div className="font-mono font-bold text-[#1e293b] truncate">{block.id}</div>
+                                    <div className={`text-[7px] font-bold px-1 rounded-sm shrink-0 ${
+                                      block.status === 'APPROVED' ? 'bg-emerald-100 text-emerald-800' :
+                                      block.status === 'PROPOSED' ? 'bg-sky-100 text-sky-800' :
+                                      block.status === 'ACTIVE' ? 'bg-red-100 text-red-800' :
+                                      'bg-slate-200 text-slate-800'
+                                    }`}>
+                                      {block.status}
+                                    </div>
+                                  </div>
+                                  
+                                  {/* Time */}
+                                  <div className="font-bold text-[#b91c1c] truncate mb-0.5">
+                                    {block.startTime} – {block.endTime}
+                                  </div>
+
+                                  {/* Department */}
+                                  <div className="font-bold text-slate-700 truncate mb-0.5">
+                                    {block.departments.map(d => d === 'Engineering' ? 'ENG' : d).join(' + ')}
+                                  </div>
+
+                                  {/* Metrics */}
+                                  <div className="font-semibold text-slate-500 truncate">
+                                    Utilization {block.utilization}%
+                                  </div>
+                                </div>
+                              </div>
+                            );
+                          })}
                         </div>
                       </div>
                     );
@@ -603,12 +798,10 @@ export default function BlockPlannerPage() {
           </div>
         </GovernmentCard>
       )}
-      </>
-      )}
 
       <Drawer 
         isOpen={!!selectedBlock} 
-        onClose={() => setSelectedBlock(null)} 
+        onClose={() => { setSelectedBlock(null); setIsModifyingBlock(false); }} 
         title={`Block Details: ${selectedBlock?.id}`}
       >
         {selectedBlock && (
@@ -630,47 +823,75 @@ export default function BlockPlannerPage() {
               </StatusBadge>
             </div>
 
-            <div className="grid grid-cols-2 gap-4">
-              <div>
-                <div className="text-[10px] uppercase text-slate-500 font-bold mb-0.5">Corridor</div>
-                <div className="text-sm font-bold text-slate-900">{selectedBlock.corridor}</div>
+            {isModifyingBlock && editBlockForm ? (
+              <div className="space-y-4 bg-indigo-50 p-4 border border-indigo-200 rounded-sm">
+                <div className="font-bold text-indigo-900 mb-2">Modify Block Parameters</div>
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-[10px] uppercase font-bold text-slate-600 mb-1">Date</label>
+                    <input type="date" className="w-full border border-slate-300 text-sm p-1.5" value={editBlockForm.date} onChange={e => setEditBlockForm({...editBlockForm, date: e.target.value})} />
+                  </div>
+                  <div>
+                    <label className="block text-[10px] uppercase font-bold text-slate-600 mb-1">Start Time</label>
+                    <input type="time" className="w-full border border-slate-300 text-sm p-1.5" value={editBlockForm.startTime} onChange={e => setEditBlockForm({...editBlockForm, startTime: e.target.value})} />
+                  </div>
+                  <div>
+                    <label className="block text-[10px] uppercase font-bold text-slate-600 mb-1">End Time</label>
+                    <input type="time" className="w-full border border-slate-300 text-sm p-1.5" value={editBlockForm.endTime} onChange={e => setEditBlockForm({...editBlockForm, endTime: e.target.value})} />
+                  </div>
+                </div>
+                <div className="flex gap-2 justify-end mt-4">
+                  <GovernmentButton size="sm" variant="outline" onClick={() => setIsModifyingBlock(false)}>CANCEL</GovernmentButton>
+                  <GovernmentButton size="sm" variant="primary" onClick={handleModifySubmit}>SAVE MODIFICATIONS</GovernmentButton>
+                </div>
               </div>
-              <div>
-                <div className="text-[10px] uppercase text-slate-500 font-bold mb-0.5">Date</div>
-                <div className="text-sm font-bold text-slate-900">{selectedBlock.date}</div>
+            ) : (
+              <div className="grid grid-cols-2 gap-4">
+                <div><div className="text-[10px] uppercase text-slate-500 font-bold mb-0.5">Corridor</div><div className="text-sm font-bold text-slate-900">{selectedBlock.corridor}</div></div>
+                <div><div className="text-[10px] uppercase text-slate-500 font-bold mb-0.5">Date</div><div className="text-sm font-bold text-slate-900">{selectedBlock.date}</div></div>
+                <div><div className="text-[10px] uppercase text-slate-500 font-bold mb-0.5">Start Time</div><div className="text-sm font-bold text-slate-900">{selectedBlock.startTime}</div></div>
+                <div><div className="text-[10px] uppercase text-slate-500 font-bold mb-0.5">End Time</div><div className="text-sm font-bold text-slate-900">{selectedBlock.endTime}</div></div>
+                <div><div className="text-[10px] uppercase text-slate-500 font-bold mb-0.5">Duration</div><div className="text-sm font-bold text-slate-900">{selectedBlock.durationMinutes} mins</div></div>
+                <div><div className="text-[10px] uppercase text-slate-500 font-bold mb-0.5">Departments</div><div className="text-sm font-bold text-slate-900">{selectedBlock.departments.join(', ')}</div></div>
+                <div><div className="text-[10px] uppercase text-slate-500 font-bold mb-0.5">Train Impact</div><div className="text-sm font-bold text-red-700">{selectedBlock.trainImpact}</div></div>
+                <div><div className="text-[10px] uppercase text-slate-500 font-bold mb-0.5">Risk Coverage</div><div className="text-sm font-bold text-emerald-700">{selectedBlock.riskCoverage}</div></div>
+                <div><div className="text-[10px] uppercase text-slate-500 font-bold mb-0.5">Utilization</div><div className="text-sm font-bold text-slate-900">{selectedBlock.utilization}%</div></div>
+                <div><div className="text-[10px] uppercase text-slate-500 font-bold mb-0.5">Crew Load</div><div className="text-sm font-bold text-slate-900">85%</div></div>
+                <div><div className="text-[10px] uppercase text-slate-500 font-bold mb-0.5">Equipment Load</div><div className="text-sm font-bold text-slate-900">100%</div></div>
+                <div><div className="text-[10px] uppercase text-slate-500 font-bold mb-0.5">Future Possession Hours Avoided</div><div className="text-sm font-bold text-emerald-700">6.5 hrs</div></div>
               </div>
-              <div>
-                <div className="text-[10px] uppercase text-slate-500 font-bold mb-0.5">Start Time</div>
-                <div className="text-sm font-bold text-slate-900">{selectedBlock.startTime}</div>
+            )}
+
+            <InfoPanel title="Block Harvesting & Capacity" className="bg-indigo-50 border-indigo-200">
+              <div className="grid grid-cols-4 gap-2 text-center text-indigo-900 mb-3">
+                <div className="bg-white p-2 rounded-sm border border-indigo-100">
+                  <div className="text-[9px] font-bold uppercase mb-1">Capacity</div>
+                  <div className="text-sm font-bold">{selectedBlock.durationMinutes} min</div>
+                </div>
+                <div className="bg-white p-2 rounded-sm border border-indigo-100">
+                  <div className="text-[9px] font-bold uppercase mb-1">Allocated</div>
+                  <div className="text-sm font-bold">{selectedBlock.durationMinutes - (selectedBlock.remainingCapacity || 0)} min</div>
+                </div>
+                <div className="bg-white p-2 rounded-sm border border-indigo-100">
+                  <div className="text-[9px] font-bold uppercase mb-1">Remaining</div>
+                  <div className="text-sm font-bold text-emerald-600">{selectedBlock.remainingCapacity || 0} min</div>
+                </div>
+                <div className="bg-white p-2 rounded-sm border border-indigo-100">
+                  <div className="text-[9px] font-bold uppercase mb-1">Harvestable</div>
+                  <div className="text-sm font-bold">{state.tasks.filter(t => t.status === "PENDING" && t.harvestable).length} tasks</div>
+                </div>
               </div>
-              <div>
-                <div className="text-[10px] uppercase text-slate-500 font-bold mb-0.5">End Time</div>
-                <div className="text-sm font-bold text-slate-900">{selectedBlock.endTime}</div>
+            </InfoPanel>
+
+            <InfoPanel title="Possession Value Options" className="bg-slate-50 border-slate-200">
+              <div className="grid grid-cols-3 gap-2">
+                <GovernmentButton size="sm" variant="primary" className="bg-slate-800 text-white">NOW</GovernmentButton>
+                <GovernmentButton size="sm" variant="outline">EXTEND</GovernmentButton>
+                <GovernmentButton size="sm" variant="outline">DEFER</GovernmentButton>
               </div>
-              <div>
-                <div className="text-[10px] uppercase text-slate-500 font-bold mb-0.5">Duration</div>
-                <div className="text-sm font-bold text-slate-900">{selectedBlock.durationMinutes} mins</div>
-              </div>
-              <div>
-                <div className="text-[10px] uppercase text-slate-500 font-bold mb-0.5">Utilization</div>
-                <div className="text-sm font-bold text-slate-900">{selectedBlock.utilization}%</div>
-              </div>
-              <div>
-                <div className="text-[10px] uppercase text-slate-500 font-bold mb-0.5">Departments</div>
-                <div className="text-sm font-bold text-slate-900">{selectedBlock.departments.join(', ')}</div>
-              </div>
-              <div>
-                <div className="text-[10px] uppercase text-slate-500 font-bold mb-0.5">Risk Coverage</div>
-                <div className="text-sm font-bold text-emerald-700">{selectedBlock.riskCoverage}</div>
-              </div>
-            </div>
+            </InfoPanel>
 
             <InfoPanel title="Tasks & Impact" className="bg-slate-50 border-slate-200">
-              <div className="grid grid-cols-2 gap-2 text-sm mb-3">
-                <div><span className="font-semibold text-slate-600">Base Tasks:</span> {selectedBlock.tasks.length}</div>
-                <div><span className="font-semibold text-slate-600">Harvested:</span> {selectedBlock.harvestedTasks.length}</div>
-                <div className="col-span-2"><span className="font-semibold text-slate-600">Train Impact:</span> <span className="text-red-700 font-bold">{selectedBlock.trainImpact}</span></div>
-              </div>
               <div className="space-y-1">
                 {[...selectedBlock.tasks, ...selectedBlock.harvestedTasks].map(taskId => (
                   <div key={taskId} className="flex justify-between items-center text-xs p-1.5 bg-white border border-slate-200 rounded-sm">
@@ -681,75 +902,25 @@ export default function BlockPlannerPage() {
               </div>
             </InfoPanel>
 
-            {selectedBlock.status === "PROPOSED" ? (
-              <InfoPanel title="Resource Feasibility" className="bg-red-50 border-red-200">
-                <div className="flex items-center gap-2 mb-2">
-                  <span className="flex h-2 w-2 rounded-full bg-red-600 animate-pulse"></span>
-                  <span className="font-bold text-red-900 text-xs">RESOURCE CONFLICT</span>
-                </div>
-                <div className="space-y-2 text-sm text-red-900">
-                  <div><span className="font-semibold">Task:</span> Track Tamper</div>
-                  <div><span className="font-semibold">Required:</span> 2 crews, 1 BCM machine</div>
-                  <div className="grid grid-cols-2 gap-2 mt-1 bg-white p-2 rounded border border-red-100">
-                    <div className="flex justify-between"><span>Crew:</span> <span className="font-bold text-emerald-600">✓</span></div>
-                    <div className="flex justify-between"><span>Machine:</span> <span className="font-bold text-red-600">✗</span></div>
-                  </div>
-                  <div className="bg-red-100 p-2 rounded-sm text-xs mt-2 border border-red-200">
-                    <span className="font-bold">Reason:</span> BCM-07 assigned to Jaipur-Kota.
-                  </div>
-                  <div className="flex flex-col gap-2 mt-3">
-                    <GovernmentButton size="sm" variant="outline" className="border-red-400 text-red-800 hover:bg-red-100">
-                      VIEW RESOURCE CONFLICT
-                    </GovernmentButton>
-                    <GovernmentButton size="sm" variant="primary">
-                      FIND NEXT FEASIBLE WINDOW
-                    </GovernmentButton>
-                  </div>
-                </div>
-              </InfoPanel>
-            ) : (
-              <InfoPanel title="Resource Feasibility" className="bg-emerald-50 border-emerald-200">
-                <div className="flex items-center gap-2 mb-2">
-                  <span className="flex h-2 w-2 rounded-full bg-emerald-500"></span>
-                  <span className="font-bold text-emerald-900 text-xs">ALL RESOURCES ALLOCATED</span>
-                </div>
-                <div className="text-sm text-emerald-900">
-                  <div className="grid grid-cols-2 gap-2 mt-1 bg-white p-2 rounded border border-emerald-100">
-                    <div className="flex justify-between"><span>Crew:</span> <span className="font-bold text-emerald-600">✓ (Allocated)</span></div>
-                    <div className="flex justify-between"><span>Machine:</span> <span className="font-bold text-emerald-600">✓ (Allocated)</span></div>
-                    <div className="flex justify-between"><span>Equipment:</span> <span className="font-bold text-emerald-600">✓ (Allocated)</span></div>
-                    <div className="flex justify-between"><span>Shift:</span> <span className="font-bold text-emerald-600">✓ (Compatible)</span></div>
-                  </div>
-                  <div className="text-xs mt-2">
-                    <span className="font-bold">Depot:</span> Main Depot
-                  </div>
-                </div>
-              </InfoPanel>
-            )}
-
             <div className="pt-4 border-t border-slate-200">
-              <div className="text-[10px] font-bold text-slate-500 mb-2 uppercase">Actions & State Transitions</div>
+              <div className="text-[10px] font-bold text-slate-500 mb-2 uppercase">Block Actions</div>
               <div className="grid grid-cols-2 gap-2 mb-2">
-                {hasPermission("REPLAN") ? (
-                  <GovernmentButton size="sm" variant="outline" className="border-indigo-500 text-indigo-700 hover:bg-indigo-50" onClick={handleHarvest}>HARVEST TASKS</GovernmentButton>
-                ) : null}
+                <GovernmentButton size="sm" variant="outline" onClick={() => playTTS(t("msg.block_explanation"))}>EXPLAIN</GovernmentButton>
+                <GovernmentButton size="sm" variant="outline" onClick={() => { setEditBlockForm(selectedBlock); setIsModifyingBlock(true); }}>MODIFY</GovernmentButton>
+                <GovernmentButton size="sm" variant="outline">ALTERNATIVES</GovernmentButton>
+                <GovernmentButton size="sm" variant="outline" className="border-indigo-500 text-indigo-700 hover:bg-indigo-50" onClick={() => { window.location.href = '/harvesting'; }}>HARVEST</GovernmentButton>
               </div>
-              <div className="grid grid-cols-2 gap-2">
-                {canApprove() ? (
-                  <>
-                    <GovernmentButton size="sm" variant="outline" onClick={() => handleUpdateStatus("PROPOSED")}>Set PROPOSED</GovernmentButton>
-                    <GovernmentButton size="sm" variant="primary" onClick={() => handleUpdateStatus("APPROVED")}>Set APPROVED</GovernmentButton>
-                    <GovernmentButton size="sm" variant="outline" className="border-red-500 text-red-700 hover:bg-red-50" onClick={() => handleUpdateStatus("ACTIVE")}>Set ACTIVE</GovernmentButton>
-                    <GovernmentButton size="sm" variant="outline" className="border-emerald-500 text-emerald-700 hover:bg-emerald-50" onClick={() => handleUpdateStatus("COMPLETED")}>Set COMPLETED</GovernmentButton>
-                    <GovernmentButton size="sm" variant="outline" onClick={() => handleUpdateStatus("REPLANNED")}>Set REPLANNED</GovernmentButton>
-                    <GovernmentButton size="sm" variant="outline" className="border-slate-500 text-slate-700 hover:bg-slate-50" onClick={() => handleUpdateStatus("REJECTED")}>Set REJECTED</GovernmentButton>
-                  </>
-                ) : (
-                  <div className="col-span-2 text-xs font-bold text-red-600 p-2 text-center bg-red-50 border border-red-200">
-                    Access restricted for your current railway role.
-                  </div>
-                )}
-              </div>
+              
+              {canApprove() ? (
+                <div className="grid grid-cols-2 gap-2 mt-4 pt-4 border-t border-slate-200">
+                  <GovernmentButton size="sm" variant="primary" onClick={() => handleUpdateStatus("APPROVED")}>APPROVE</GovernmentButton>
+                  <GovernmentButton size="sm" variant="outline" className="border-red-500 text-red-700 hover:bg-red-50" onClick={handleReject}>REJECT</GovernmentButton>
+                </div>
+              ) : (
+                <div className="mt-4 text-xs font-bold text-red-600 p-2 text-center bg-red-50 border border-red-200">
+                  Approval access restricted for your current railway role.
+                </div>
+              )}
             </div>
           </div>
         )}

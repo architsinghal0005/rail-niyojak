@@ -16,6 +16,7 @@ export default function BacklogPage() {
   const { t } = useTranslation();
   const { state, dispatch } = useAppState();
   const router = useRouter();
+  const [selectedTaskIds, setSelectedTaskIds] = useState<string[]>([]);
   const [selectedTask, setSelectedTask] = useState<MaintenanceTask | null>(null);
   const [viewMode, setViewMode] = useState<"TASKS" | "ASSET">("TASKS");
   
@@ -62,20 +63,25 @@ export default function BacklogPage() {
         action={
           <GovernmentButton 
             variant="primary" 
-            disabled={state.selectedTasksForPlanning.length === 0}
-            onClick={() => router.push('/block-planner')}
+            disabled={selectedTaskIds.length === 0}
+            onClick={() => {
+              dispatch({ type: "QUEUE_TASKS_FOR_PLANNING", payload: selectedTaskIds });
+              dispatch({ type: "ADD_NOTIFICATION", payload: { severity: "Medium", title: "TASKS QUEUED", message: `${selectedTaskIds.length} tasks added to Block Planner.`, relatedEntity: "" } });
+              alert(`${selectedTaskIds.length} tasks added to Block Planner.`);
+              setSelectedTaskIds([]);
+            }}
           >
-            PLAN SELECTED TASKS ({state.selectedTasksForPlanning.length})
+            PLAN SELECTED TASKS ({selectedTaskIds.length})
           </GovernmentButton>
         }
       />
 
       {/* TOP SUMMARY */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-        <MetricCard title="Total Tasks" value="48" />
-        <MetricCard title="High Risk" value="18" status="danger" />
-        <MetricCard title="Overdue" value="7" status="warning" />
-        <MetricCard title="Harvest Candidates" value="11" status="success" />
+        <MetricCard title="Total Tasks" value={state.tasks.length.toString()} />
+        <MetricCard title="High Risk" value={state.tasks.filter(t => t.severity === 'High' || t.severity === 'Critical' || t.risk === 'High' || t.risk === 'Critical').length.toString()} status="danger" />
+        <MetricCard title="Overdue" value={state.tasks.filter(t => t.daysOverdue > 0 || (t.status as string) === 'OVERDUE').length.toString()} status="warning" />
+        <MetricCard title="Harvest Candidates" value={state.tasks.filter(t => t.harvestable).length.toString()} status="success" />
       </div>
 
       <GovernmentCard className="p-4">
@@ -143,7 +149,7 @@ export default function BacklogPage() {
           className="overflow-y-auto"
         >
           {filteredTasks.map(task => {
-            const isSelected = state.selectedTasksForPlanning.includes(task.id);
+            const isSelected = selectedTaskIds.includes(task.id);
             const intelligence = calculatePriority(task);
             return (
               <tr 
@@ -159,9 +165,11 @@ export default function BacklogPage() {
                     onChange={() => {
                       if (!canSelectDept(task.department)) return;
                       if (isSelected) {
-                        dispatch({ type: "DESELECT_TASK_FOR_PLANNING", payload: task.id });
+                        setSelectedTaskIds(prev => prev.filter(id => id !== task.id));
+                        dispatch({ type: "MARK_TASK_STATUS", payload: { id: task.id, status: "PENDING" } });
                       } else {
-                        dispatch({ type: "SELECT_TASK_FOR_PLANNING", payload: task.id });
+                        setSelectedTaskIds(prev => [...prev, task.id]);
+                        dispatch({ type: "MARK_TASK_STATUS", payload: { id: task.id, status: "SELECTED" } });
                       }
                     }}
                     className="w-4 h-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
