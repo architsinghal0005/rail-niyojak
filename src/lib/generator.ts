@@ -219,8 +219,11 @@ export function generateSyntheticData(): AppState {
   }));
 
   const userRoles: UserRole[] = [
-    { id: "R-1", name: "Admin", permissions: ["ALL"] },
-    { id: "R-2", name: "Control Officer", permissions: ["VIEW", "APPROVE", "REPLAN"] }
+    { id: "R-1", name: "Administrator", permissions: ["ALL"] },
+    { id: "R-2", name: "Section Controller", permissions: ["VIEW_ALL", "OPTIMIZE", "APPROVE", "REJECT", "OVERRIDE", "REPLAN", "VIEW_REPORTS"] },
+    { id: "R-3", name: "Track Engineer", permissions: ["VIEW_ENGINEERING", "CREATE_ENGINEERING_REQ", "SELECT_ENGINEERING_TASKS"] },
+    { id: "R-4", name: "Traction Engineer", permissions: ["VIEW_TRD", "CREATE_TRD_REQ", "SELECT_TRD_TASKS"] },
+    { id: "R-5", name: "Signal Engineer", permissions: ["VIEW_S&T", "CREATE_S&T_REQ", "SELECT_S&T_TASKS"] }
   ];
 
   const auditLogs: AuditEvent[] = [
@@ -257,6 +260,7 @@ export function generateSyntheticData(): AppState {
     userRoles,
     blocks: [],
     selectedTasksForPlanning: [],
-    currentOptimizationResult: null
+    currentOptimizationResult: null,
+    currentUserRole: "Administrator"
   };
 }

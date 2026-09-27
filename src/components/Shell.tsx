@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import { useTranslation } from "@/lib/i18n";
-import { useAppState } from "@/lib/store";
+import { useAppState, useRBAC } from "@/lib/store";
 import { 
   Menu, X, Home, Clock, Calendar, 
   Map as MapIcon, Activity, AlertTriangle, 
@@ -17,6 +17,7 @@ export default function Shell({ children }: { children: React.ReactNode }) {
   const [isNotificationsOpen, setIsNotificationsOpen] = useState(false);
   const { t, lang, setLang } = useTranslation();
   const { state, dispatch } = useAppState();
+  const { currentRoleName } = useRBAC();
   const pathname = usePathname();
   const router = useRouter();
 
@@ -203,7 +204,25 @@ export default function Shell({ children }: { children: React.ReactNode }) {
                 <User className="h-4 w-4" />
               </div>
               <div className="flex flex-col">
-                <span className="text-xs font-bold text-slate-800">Control Officer</span>
+                <select 
+                  className="bg-transparent border-none text-xs font-bold text-slate-800 p-0 focus:ring-0 cursor-pointer outline-none"
+                  value={currentRoleName}
+                  onChange={(e) => {
+                    dispatch({ type: "SET_CURRENT_ROLE", payload: e.target.value });
+                    dispatch({ type: "ADD_AUDIT_EVENT", payload: {
+                      event: "LOGIN",
+                      entity: "SYSTEM",
+                      previousState: "-",
+                      newState: "-",
+                      reason: "Role switched",
+                      user: e.target.value
+                    }});
+                  }}
+                >
+                  {state.userRoles?.map(r => (
+                    <option key={r.id} value={r.name}>{r.name}</option>
+                  ))}
+                </select>
                 <span className="text-[10px] text-slate-500">Northern Railway</span>
               </div>
             </div>

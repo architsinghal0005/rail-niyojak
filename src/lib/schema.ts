@@ -265,4 +265,5 @@ export interface AppState {
   blocks: Block[];
   selectedTasksForPlanning: string[];
   currentOptimizationResult: Block | null;
+  currentUserRole: string; // Add current user role for RBAC
 }

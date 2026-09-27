@@ -2,7 +2,7 @@
 
 import { useTranslation } from "@/lib/i18n";
 import { useState, useEffect } from "react";
-import { useAppState, Block, BlockStatus, BlockRequest, BlockRequestStatus } from "@/lib/store";
+import { useAppState, Block, BlockStatus, BlockRequest, BlockRequestStatus, useRBAC } from "@/lib/store";
 import { 
   SectionHeader, GovernmentCard, 
   GovernmentButton, FilterBar, Drawer, InfoPanel, StatusBadge
@@ -30,9 +30,14 @@ interface Conflict {
 export default function BlockPlannerPage() {
   const { t, playTTS } = useTranslation();
   const { state, dispatch } = useAppState();
+  const { canCreateBlock, canApprove, hasPermission, currentRoleName } = useRBAC();
   const [selectedBlock, setSelectedBlock] = useState<Block | null>(null);
   const [horizon, setHorizon] = useState<"DAILY" | "WEEKLY" | "MONTHLY" | "REQUESTS">("DAILY");
   const [selectedRequest, setSelectedRequest] = useState<BlockRequest | null>(null);
+  
+  const [showCreateForm, setShowCreateForm] = useState(false);
+  const [createForm, setCreateForm] = useState({ date: "2026-09-30", startTime: "02:00", endTime: "05:00", corridor: CORRIDORS[0] });
+  const [createValidation, setCreateValidation] = useState<{valid: boolean, error?: string} | null>(null);
   
   useEffect(() => {
     if (selectedBlock) {
@@ -179,43 +184,63 @@ export default function BlockPlannerPage() {
     }});
   };
 
-  const handleRunOptimization = () => {
+  const parseTime = (time: string) => { const [h,m] = time.split(':').map(Number); return h*60+m; };
+
+  const validateBlock = () => {
+    const duration = parseTime(createForm.endTime) - parseTime(createForm.startTime);
+    if (duration <= 0) {
+      setCreateValidation({ valid: false, error: "End time must be after start time."});
+      return;
+    }
+    if (duration > 240) {
+      setCreateValidation({ valid: false, error: "Duration exceeds allowed maximum (240 mins)."});
+      return;
+    }
+    if (createForm.startTime <= "03:05" && createForm.endTime >= "02:40") {
+      setCreateValidation({ valid: false, error: "Cannot create block: Train 12951 conflicts with 02:40–03:05."});
+      return;
+    }
+    setCreateValidation({ valid: true });
+  };
+
+  const handleCreateBlock = () => {
+    if (!createValidation?.valid) return;
     if (state.selectedTasksForPlanning.length === 0) return;
     
     const selTasks = state.tasks.filter(t => state.selectedTasksForPlanning.includes(t.id));
-    if (selTasks.length === 0) return;
-    
-    const maxDuration = Math.max(...selTasks.map(t => t.durationMinutes || 60));
+    const duration = parseTime(createForm.endTime) - parseTime(createForm.startTime);
     const departments = Array.from(new Set(selTasks.map(t => t.department)));
-    const corridor = state.corridors.find(c => c.id === selTasks[0].corridorId)?.name || "KOTA-ITARSI";
     
     const newBlock: Block = {
       id: `OPT-${Date.now().toString().slice(-5)}`,
-      corridor,
-      date: "2026-09-30",
-      startTime: "02:00",
-      endTime: "06:00",
-      durationMinutes: maxDuration + 30,
+      corridor: createForm.corridor,
+      date: createForm.date,
+      startTime: createForm.startTime,
+      endTime: createForm.endTime,
+      durationMinutes: duration,
       departments,
       tasks: state.selectedTasksForPlanning,
       harvestedTasks: [],
       trainImpact: "Low",
       riskCoverage: "High",
       utilization: 85,
-      status: "OPTIMIZED",
-      reason: "Auto-optimized block encompassing selected high-risk tasks."
+      status: "PROPOSED",
+      reason: "Manually created block."
     };
     
-    dispatch({ type: "OPTIMIZE_BLOCK", payload: newBlock });
+    dispatch({ type: "CREATE_BLOCK", payload: newBlock });
     
     dispatch({ type: "ADD_AUDIT_EVENT", payload: {
-      event: "BLOCK_OPTIMIZATION_RUN",
+      event: "BLOCK_CREATED",
       entity: newBlock.id,
       previousState: "-",
-      newState: "OPTIMIZED",
-      reason: `Optimized ${selTasks.length} tasks into a single possession window.`,
-      user: "System AI"
+      newState: "PROPOSED",
+      reason: `Created block with ${selTasks.length} tasks.`,
+      user: currentRoleName
     }});
+    
+    setShowCreateForm(false);
+    setCreateValidation(null);
   };
 
   const handleIgnoreConflict = (conflict: Conflict) => {
@@ -325,18 +350,60 @@ export default function BlockPlannerPage() {
 
       {state.selectedTasksForPlanning.length > 0 && (
         <GovernmentCard className="p-4 border-l-4 border-l-indigo-600 bg-indigo-50">
-          <div className="flex justify-between items-center">
-            <div>
-              <div className="font-bold text-indigo-900 mb-1">Tasks Selected for Optimization</div>
-              <div className="text-xs text-indigo-700">
-                {state.selectedTasksForPlanning.length} tasks pending bundling. 
-                They require {Math.max(...state.tasks.filter(t => state.selectedTasksForPlanning.includes(t.id)).map(t => t.durationMinutes || 60))} mins of base possession time.
+          {!showCreateForm ? (
+            <div className="flex justify-between items-center">
+              <div>
+                <div className="font-bold text-indigo-900 mb-1">Tasks Selected for Block Creation</div>
+                <div className="text-xs text-indigo-700">
+                  {state.selectedTasksForPlanning.length} tasks selected.
+                </div>
+              </div>
+              {canCreateBlock() ? (
+                <GovernmentButton variant="primary" onClick={() => setShowCreateForm(true)}>
+                  CREATE BLOCK
+                </GovernmentButton>
+              ) : (
+                <div className="text-xs font-bold text-red-600">Access restricted for your current railway role.</div>
+              )}
+            </div>
+          ) : (
+            <div className="space-y-4">
+              <div className="font-bold text-indigo-900 mb-2 border-b border-indigo-200 pb-2">Configure Block Parameters</div>
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                <div>
+                  <label className="block text-[10px] uppercase font-bold text-slate-600 mb-1">Date</label>
+                  <input type="date" className="w-full border border-slate-300 text-sm p-1.5" value={createForm.date} onChange={e => setCreateForm({...createForm, date: e.target.value})} />
+                </div>
+                <div>
+                  <label className="block text-[10px] uppercase font-bold text-slate-600 mb-1">Start Time</label>
+                  <input type="time" className="w-full border border-slate-300 text-sm p-1.5" value={createForm.startTime} onChange={e => setCreateForm({...createForm, startTime: e.target.value})} />
+                </div>
+                <div>
+                  <label className="block text-[10px] uppercase font-bold text-slate-600 mb-1">End Time</label>
+                  <input type="time" className="w-full border border-slate-300 text-sm p-1.5" value={createForm.endTime} onChange={e => setCreateForm({...createForm, endTime: e.target.value})} />
+                </div>
+                <div>
+                  <label className="block text-[10px] uppercase font-bold text-slate-600 mb-1">Corridor</label>
+                  <select className="w-full border border-slate-300 text-sm p-1.5" value={createForm.corridor} onChange={e => setCreateForm({...createForm, corridor: e.target.value})}>
+                    {CORRIDORS.map(c => <option key={c} value={c}>{c}</option>)}
+                  </select>
+                </div>
+              </div>
+              
+              <div className="flex justify-between items-center pt-2">
+                <GovernmentButton variant="outline" onClick={validateBlock}>VALIDATE BLOCK</GovernmentButton>
+                {createValidation && (
+                  <div className={`text-xs font-bold ${createValidation.valid ? 'text-emerald-700' : 'text-red-700'}`}>
+                    {createValidation.valid ? "✓ FEASIBLE BLOCK WINDOW" : createValidation.error}
+                  </div>
+                )}
+                <div className="flex gap-2">
+                  <GovernmentButton variant="outline" onClick={() => { setShowCreateForm(false); setCreateValidation(null); }}>CANCEL</GovernmentButton>
+                  <GovernmentButton variant="primary" disabled={!createValidation?.valid} onClick={handleCreateBlock}>SUBMIT BLOCK</GovernmentButton>
+                </div>
               </div>
             </div>
-            <GovernmentButton variant="primary" onClick={handleRunOptimization}>
-              RUN OPTIMIZATION
-            </GovernmentButton>
-          </div>
+          )}
         </GovernmentCard>
       )}
 
@@ -663,15 +730,25 @@ export default function BlockPlannerPage() {
             <div className="pt-4 border-t border-slate-200">
               <div className="text-[10px] font-bold text-slate-500 mb-2 uppercase">Actions & State Transitions</div>
               <div className="grid grid-cols-2 gap-2 mb-2">
-                <GovernmentButton size="sm" variant="outline" className="border-indigo-500 text-indigo-700 hover:bg-indigo-50" onClick={handleHarvest}>HARVEST TASKS</GovernmentButton>
+                {hasPermission("REPLAN") ? (
+                  <GovernmentButton size="sm" variant="outline" className="border-indigo-500 text-indigo-700 hover:bg-indigo-50" onClick={handleHarvest}>HARVEST TASKS</GovernmentButton>
+                ) : null}
               </div>
               <div className="grid grid-cols-2 gap-2">
-                <GovernmentButton size="sm" variant="outline" onClick={() => handleUpdateStatus("PROPOSED")}>Set PROPOSED</GovernmentButton>
-                <GovernmentButton size="sm" variant="primary" onClick={() => handleUpdateStatus("APPROVED")}>Set APPROVED</GovernmentButton>
-                <GovernmentButton size="sm" variant="outline" className="border-red-500 text-red-700 hover:bg-red-50" onClick={() => handleUpdateStatus("ACTIVE")}>Set ACTIVE</GovernmentButton>
-                <GovernmentButton size="sm" variant="outline" className="border-emerald-500 text-emerald-700 hover:bg-emerald-50" onClick={() => handleUpdateStatus("COMPLETED")}>Set COMPLETED</GovernmentButton>
-                <GovernmentButton size="sm" variant="outline" onClick={() => handleUpdateStatus("REPLANNED")}>Set REPLANNED</GovernmentButton>
-                <GovernmentButton size="sm" variant="outline" className="border-slate-500 text-slate-700 hover:bg-slate-50" onClick={() => handleUpdateStatus("REJECTED")}>Set REJECTED</GovernmentButton>
+                {canApprove() ? (
+                  <>
+                    <GovernmentButton size="sm" variant="outline" onClick={() => handleUpdateStatus("PROPOSED")}>Set PROPOSED</GovernmentButton>
+                    <GovernmentButton size="sm" variant="primary" onClick={() => handleUpdateStatus("APPROVED")}>Set APPROVED</GovernmentButton>
+                    <GovernmentButton size="sm" variant="outline" className="border-red-500 text-red-700 hover:bg-red-50" onClick={() => handleUpdateStatus("ACTIVE")}>Set ACTIVE</GovernmentButton>
+                    <GovernmentButton size="sm" variant="outline" className="border-emerald-500 text-emerald-700 hover:bg-emerald-50" onClick={() => handleUpdateStatus("COMPLETED")}>Set COMPLETED</GovernmentButton>
+                    <GovernmentButton size="sm" variant="outline" onClick={() => handleUpdateStatus("REPLANNED")}>Set REPLANNED</GovernmentButton>
+                    <GovernmentButton size="sm" variant="outline" className="border-slate-500 text-slate-700 hover:bg-slate-50" onClick={() => handleUpdateStatus("REJECTED")}>Set REJECTED</GovernmentButton>
+                  </>
+                ) : (
+                  <div className="col-span-2 text-xs font-bold text-red-600 p-2 text-center bg-red-50 border border-red-200">
+                    Access restricted for your current railway role.
+                  </div>
+                )}
               </div>
             </div>
           </div>
@@ -727,10 +804,18 @@ export default function BlockPlannerPage() {
               <div className="text-[10px] font-bold text-slate-500 mb-2 uppercase">Actions</div>
               <div className="grid grid-cols-2 gap-2">
                 <GovernmentButton size="sm" variant="outline" onClick={() => handleRequestAction(selectedRequest, "SUBMIT")}>SUBMIT</GovernmentButton>
-                <GovernmentButton size="sm" variant="primary" onClick={() => handleRequestAction(selectedRequest, "APPROVE")}>APPROVE</GovernmentButton>
                 <GovernmentButton size="sm" variant="outline" onClick={() => handleRequestAction(selectedRequest, "MODIFY")}>MODIFY</GovernmentButton>
-                <GovernmentButton size="sm" variant="outline" onClick={() => handleRequestAction(selectedRequest, "OVERRIDE")}>OVERRIDE</GovernmentButton>
-                <GovernmentButton size="sm" variant="outline" className="col-span-2 border-red-500 text-red-700 hover:bg-red-50" onClick={() => handleRequestAction(selectedRequest, "REJECT")}>REJECT</GovernmentButton>
+                {canApprove() ? (
+                  <>
+                    <GovernmentButton size="sm" variant="primary" onClick={() => handleRequestAction(selectedRequest, "APPROVE")}>APPROVE</GovernmentButton>
+                    <GovernmentButton size="sm" variant="outline" onClick={() => handleRequestAction(selectedRequest, "OVERRIDE")}>OVERRIDE</GovernmentButton>
+                    <GovernmentButton size="sm" variant="outline" className="col-span-2 border-red-500 text-red-700 hover:bg-red-50" onClick={() => handleRequestAction(selectedRequest, "REJECT")}>REJECT</GovernmentButton>
+                  </>
+                ) : (
+                  <div className="col-span-2 text-xs font-bold text-red-600 p-2 text-center bg-red-50 border border-red-200">
+                    Approval access restricted for your current railway role.
+                  </div>
+                )}
               </div>
             </div>
           </div>

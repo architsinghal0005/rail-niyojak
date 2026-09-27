@@ -6,9 +6,7 @@ import { ArrowRight, Database, Layers, Zap, ArrowDown, RotateCcw, AlertTriangle,
 import { useTranslation } from "@/lib/i18n";
 
 // ─── Animation configuration ──────────────────────────────────────────────
-const TRAIN_DURATION_MS = 14000;
-const STATION_POSITIONS = [0.12, 0.38, 0.63, 0.87]; // fractional positions along track
-const STATION_DELAYS = [0, 150, 300, 450];            // stagger within each station reveal
+const STATION_POSITIONS = [0.12, 0.37, 0.62, 0.85]; // fractional positions along track
 
 type StationState = "hidden" | "revealing" | "visible";
 
@@ -17,15 +15,15 @@ export default function LandingPage() {
   
   const trackRef = useRef<HTMLDivElement>(null);
   const trainRef = useRef<HTMLDivElement>(null);
-  const rafRef = useRef<number>(0);
-  const startTimeRef = useRef<number>(0);
-  const hasPlayedRef = useRef(false);
+  const journeyProgressRef = useRef(0);
+  const journeyLockedRef = useRef(false);
 
   const [stationStates, setStationStates] = useState<StationState[]>(["hidden", "hidden", "hidden", "hidden"]);
   const [markerActive, setMarkerActive] = useState([false, false, false, false]);
   const [trainPct, setTrainPct] = useState(-18); // starting left %
   const [journeyDone, setJourneyDone] = useState(false);
   const [reducedMotion, setReducedMotion] = useState(false);
+  const [isLockedIndicator, setIsLockedIndicator] = useState(false);
 
   // ─── Detect prefers-reduced-motion ──────────────────────────────────────────
   useEffect(() => {
@@ -33,19 +31,8 @@ export default function LandingPage() {
     setReducedMotion(mq.matches);
   }, []);
 
-  // ─── Reveal a single station ────────────────────────────────────────────────
-  const revealStation = useCallback((idx: number) => {
-    setMarkerActive(prev => { const n = [...prev]; n[idx] = true; return n; });
-    setTimeout(() => {
-      setStationStates(prev => { const n = [...prev]; n[idx] = "revealing"; return n; });
-      setTimeout(() => {
-        setStationStates(prev => { const n = [...prev]; n[idx] = "visible"; return n; });
-      }, 700);
-    }, STATION_DELAYS[idx]);
-  }, []);
-
-  // ─── Core animation loop ────────────────────────────────────────────────────
-  const startJourney = useCallback(() => {
+  // ─── Scroll-driven Animation Loop ────────────────────────────────────────────
+  useEffect(() => {
     if (reducedMotion) {
       setTrainPct(108);
       setStationStates(["visible", "visible", "visible", "visible"]);
@@ -54,62 +41,136 @@ export default function LandingPage() {
       return;
     }
 
-    const triggered = [false, false, false];
-    startTimeRef.current = performance.now();
+    let rafId: number;
+    let lastTop = 99999;
 
-    const tick = (now: number) => {
-      const elapsed = now - startTimeRef.current;
-      const progress = Math.min(elapsed / TRAIN_DURATION_MS, 1); // 0 → 1
+    const updateVisuals = (progress: number) => {
       const pct = -18 + progress * 126;
       setTrainPct(pct);
 
+      const newStates: StationState[] = ["hidden", "hidden", "hidden", "hidden"];
+      const newMarkers = [false, false, false, false];
+
       STATION_POSITIONS.forEach((pos, i) => {
-        const triggerPct = pos * 100 - 6;
-        if (!triggered[i] && pct >= triggerPct) {
-          triggered[i] = true;
-          revealStation(i);
+        if (progress >= pos - 0.05) {
+          newStates[i] = "visible";
+          newMarkers[i] = true;
         }
       });
 
-      if (progress < 1) {
-        rafRef.current = requestAnimationFrame(tick);
-      } else {
-        setTrainPct(108);
-        setJourneyDone(true);
+      setStationStates(newStates);
+      setMarkerActive(newMarkers);
+      setJourneyDone(progress >= 1);
+    };
+
+    const handleWheel = (e: WheelEvent) => {
+      if (!journeyLockedRef.current) return;
+      e.preventDefault();
+      
+      const delta = e.deltaY;
+      journeyProgressRef.current += delta / 2000;
+      
+      if (journeyProgressRef.current > 1) {
+        journeyProgressRef.current = 1;
+        if (delta > 0) {
+          journeyLockedRef.current = false;
+          setIsLockedIndicator(false);
+        }
+      }
+      
+      if (journeyProgressRef.current < 0) {
+        journeyProgressRef.current = 0;
+        if (delta < 0) {
+          journeyLockedRef.current = false;
+          setIsLockedIndicator(false);
+        }
+      }
+      rafId = requestAnimationFrame(() => updateVisuals(journeyProgressRef.current));
+    };
+
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (!journeyLockedRef.current) return;
+      if (e.key === "Escape") {
+        journeyLockedRef.current = false;
+        setIsLockedIndicator(false);
+        return;
+      }
+      
+      const keys = { "ArrowDown": 50, "ArrowUp": -50, "PageDown": 200, "PageUp": -200, " ": 100 };
+      if (e.key in keys) {
+        e.preventDefault();
+        const delta = keys[e.key as keyof typeof keys];
+        journeyProgressRef.current += delta / 2000;
+        
+        if (journeyProgressRef.current > 1) {
+          journeyProgressRef.current = 1;
+          if (delta > 0) {
+            journeyLockedRef.current = false;
+            setIsLockedIndicator(false);
+          }
+        }
+        
+        if (journeyProgressRef.current < 0) {
+          journeyProgressRef.current = 0;
+          if (delta < 0) {
+            journeyLockedRef.current = false;
+            setIsLockedIndicator(false);
+          }
+        }
+        rafId = requestAnimationFrame(() => updateVisuals(journeyProgressRef.current));
       }
     };
 
-    rafRef.current = requestAnimationFrame(tick);
-  }, [reducedMotion, revealStation]);
+    const handleScrollDetect = () => {
+      if (journeyLockedRef.current || window.innerWidth <= 768) return;
+      if (!trackRef.current) return;
+      
+      const rect = trackRef.current.getBoundingClientRect();
+      const p = journeyProgressRef.current;
+      
+      // Approaching from top, moving down
+      if (p === 0 && lastTop > 0 && rect.top <= 5) {
+         window.scrollTo({ top: window.scrollY + rect.top });
+         journeyLockedRef.current = true;
+         setIsLockedIndicator(true);
+      }
+      // Approaching from bottom, moving up
+      else if (p === 1 && lastTop < 0 && rect.top >= -5) {
+         window.scrollTo({ top: window.scrollY + rect.top });
+         journeyLockedRef.current = true;
+         setIsLockedIndicator(true);
+      }
+      
+      lastTop = rect.top;
+    };
+
+    window.addEventListener("wheel", handleWheel, { passive: false });
+    window.addEventListener("keydown", handleKeyDown, { passive: false });
+    window.addEventListener("scroll", handleScrollDetect, { passive: true });
+    
+    return () => {
+      window.removeEventListener("wheel", handleWheel);
+      window.removeEventListener("keydown", handleKeyDown);
+      window.removeEventListener("scroll", handleScrollDetect);
+      cancelAnimationFrame(rafId);
+    };
+  }, [reducedMotion]);
 
   // ─── Replay handler ─────────────────────────────────────────────────────────
   const handleReplay = useCallback(() => {
-    cancelAnimationFrame(rafRef.current);
-    hasPlayedRef.current = false;
-    setTrainPct(-18);
-    setStationStates(["hidden", "hidden", "hidden", "hidden"]);
-    setMarkerActive([false, false, false, false]);
-    setJourneyDone(false);
-    setTimeout(startJourney, 80);
-  }, [startJourney]);
-
-  // ─── IntersectionObserver – start once on first visibility ──────────────────
-  useEffect(() => {
-    const el = trackRef.current;
-    if (!el) return;
-
-    const observer = new IntersectionObserver(
-      entries => {
-        if (entries[0].isIntersecting && !hasPlayedRef.current) {
-          hasPlayedRef.current = true;
-          startJourney();
-        }
-      },
-      { threshold: 0.25 }
-    );
-    observer.observe(el);
-    return () => { observer.disconnect(); cancelAnimationFrame(rafRef.current); };
-  }, [startJourney]);
+    if (trackRef.current) {
+      journeyProgressRef.current = 0;
+      setTrainPct(-18);
+      setStationStates(["hidden", "hidden", "hidden", "hidden"]);
+      setMarkerActive([false, false, false, false]);
+      setJourneyDone(false);
+      
+      window.scrollTo({
+        top: trackRef.current.offsetTop,
+        behavior: "smooth"
+      });
+    }
+  }, []);
 
   // ─── Station visibility style helper ────────────────────────────────────────
   const stationStyle = (state: StationState, dir: "up" | "down") => ({
@@ -212,29 +273,31 @@ export default function LandingPage() {
           </div>
         </div>
 
-        {/* ─── ANIMATED RAILWAY TRACK JOURNEY ────────────────────────────── */}
+        {/* ─── ANIMATED RAILWAY TRACK JOURNEY (SCROLL-DRIVEN) ────────────────────────────── */}
         <div
           id="track-journey"
           ref={trackRef}
-          className="hidden md:block relative bg-slate-50 border-t border-slate-200 overflow-hidden"
+          className="hidden md:block relative bg-slate-50 border-t border-slate-200 h-screen"
         >
-          <div className="max-w-7xl mx-auto px-4 sm:px-6 pt-8 flex items-center justify-between">
-            <div>
-              <div className="text-xl font-black text-slate-800 uppercase tracking-widest">{t("journey.title")}</div>
-              <div className="text-sm font-bold text-slate-500 mt-1">{t("journey.subtitle")}</div>
+          <div className="h-full w-full overflow-hidden flex flex-col justify-center">
+            
+            <div className="absolute top-0 left-0 right-0 max-w-7xl mx-auto px-4 sm:px-6 pt-12 flex items-center justify-between z-40">
+              <div>
+                <div className="text-xl font-black text-slate-800 uppercase tracking-widest">{t("journey.title")}</div>
+                <div className="text-sm font-bold text-slate-500 mt-1">{t("journey.subtitle")}</div>
+              </div>
+              <div className="flex items-center">
+                <button
+                  onClick={handleReplay}
+                  style={{ opacity: (journeyDone || reducedMotion) ? 1 : 0, pointerEvents: (journeyDone || reducedMotion) ? "auto" : "none" }}
+                  className="flex items-center gap-1.5 text-xs font-bold text-slate-600 hover:text-red-800 uppercase tracking-widest border border-slate-300 px-4 py-2 hover:border-red-800 transition-all bg-white shadow-sm rounded-sm"
+                >
+                  <RotateCcw className="h-4 w-4" /> {t("journey.replay")}
+                </button>
+              </div>
             </div>
-            <div className="flex items-center">
-              <button
-                onClick={handleReplay}
-                style={{ opacity: (journeyDone || reducedMotion) ? 1 : 0, pointerEvents: (journeyDone || reducedMotion) ? "auto" : "none" }}
-                className="flex items-center gap-1.5 text-xs font-bold text-slate-600 hover:text-red-800 uppercase tracking-widest border border-slate-300 px-4 py-2 hover:border-red-800 transition-all bg-white shadow-sm rounded-sm"
-              >
-                <RotateCcw className="h-4 w-4" /> {t("journey.replay")}
-              </button>
-            </div>
-          </div>
 
-          <div className="relative h-[600px] w-full mt-4">
+            <div className="relative h-[500px] w-full max-w-[1600px] mx-auto mt-12">
             {/* SINGLE Railway Track SVG */}
             <div className="absolute left-0 right-0 top-1/2 -translate-y-1/2 h-10 pointer-events-none z-10">
               <svg width="100%" height="100%" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="none">
@@ -328,7 +391,7 @@ export default function LandingPage() {
                 <div className="absolute rounded-full border-[4px] border-white shadow-md" style={{ ...markerStyle(markerActive[3], true), width: 28, height: 28, top: "-14px" }} />
                 <div className="absolute bg-emerald-700 w-[4px] h-[32px] top-0" />
                 <div style={{ ...stationStyle(stationStates[3], "down"), paddingTop: "32px" }}>
-                  <div className="bg-emerald-50 border-2 border-emerald-700 shadow-lg p-5 w-[290px] h-[250px] flex flex-col items-center justify-center text-center rounded-sm relative">
+                  <div className="bg-emerald-50 border-2 border-emerald-700 shadow-lg p-4 w-[270px] h-[250px] flex flex-col items-center justify-center text-center rounded-sm relative">
                     <div className="bg-emerald-700 text-white text-lg font-black px-4 py-1.5 tracking-widest rounded-sm mb-3 border border-emerald-900">04</div>
                     <Zap className="h-6 w-6 text-emerald-700 mx-auto mb-2" />
                     <h3 className="text-sm font-black text-emerald-900 uppercase tracking-widest mb-3 border-b-2 border-emerald-400 pb-2 w-full">{t("journey.step4")}</h3>
@@ -343,7 +406,17 @@ export default function LandingPage() {
             </div>
           </div>
         </div>
-      </section>
+      </div>
+    </section>
+
+    {isLockedIndicator && !reducedMotion && (
+      <div className="fixed bottom-8 right-8 z-50 bg-slate-900 text-white p-4 rounded-sm shadow-2xl border border-slate-700 flex flex-col items-center animate-fade-in pointer-events-none">
+        <div className="text-[9px] font-black uppercase tracking-widest text-slate-400 mb-1">Scroll to Travel</div>
+        <ArrowDown className="h-4 w-4 text-red-500 mb-2 animate-bounce" />
+        <div className="text-xs font-bold uppercase tracking-widest border-t border-slate-700 pt-2 w-full text-center">Train Journey</div>
+        <div className="text-2xl font-black text-white">{Math.round(journeyProgressRef.current * 100)}%</div>
+      </div>
+    )}
 
       {/* ─── NEW SECTIONS ──────────────────────────────────────────────────────── */}
       

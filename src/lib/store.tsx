@@ -23,10 +23,22 @@ type Action =
   | { type: "ADD_NOTIFICATION"; payload: Omit<import('./schema').Notification, "id" | "timestamp" | "read"> }
   | { type: "MARK_NOTIFICATION_READ"; payload: string }
   | { type: "MARK_ALL_NOTIFICATIONS_READ" }
-  | { type: "CLEAR_NOTIFICATIONS" };
+  | { type: "CLEAR_NOTIFICATIONS" }
+  | { type: "SET_CURRENT_ROLE"; payload: string }
+  | { type: "CREATE_BLOCK"; payload: Block };
 
 function appReducer(state: AppState, action: Action): AppState {
   switch (action.type) {
+    case "SET_CURRENT_ROLE":
+      return { ...state, currentUserRole: action.payload };
+      
+    case "CREATE_BLOCK":
+      return { 
+        ...state, 
+        blocks: [...state.blocks, action.payload],
+        tasks: state.tasks.map(t => action.payload.tasks.includes(t.id) ? { ...t, status: "SCHEDULED" } : t)
+      };
+
     case "LOAD_STATE":
       return {
         ...initialState,
@@ -244,4 +256,24 @@ export function useAppState() {
     throw new Error("useAppState must be used within an AppStateProvider");
   }
   return context;
+}
+
+export function useRBAC() {
+  const { state } = useAppState();
+  const currentRoleName = state.currentUserRole || "Administrator";
+  const role = state.userRoles.find(r => r.name === currentRoleName) || state.userRoles[0];
+  const perms = role?.permissions || [];
+  const isAdmin = perms.includes("ALL");
+
+  const hasPermission = (p: string) => isAdmin || perms.includes(p);
+
+  return {
+    currentRoleName,
+    isAdmin,
+    hasPermission,
+    canApprove: () => hasPermission("APPROVE"),
+    canCreateBlock: () => hasPermission("CREATE_ENGINEERING_REQ") || hasPermission("CREATE_TRD_REQ") || hasPermission("CREATE_S&T_REQ") || hasPermission("OPTIMIZE"),
+    canOverride: () => hasPermission("OVERRIDE"),
+    canReplan: () => hasPermission("REPLAN"),
+  };
 }

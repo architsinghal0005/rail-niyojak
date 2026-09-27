@@ -8,7 +8,7 @@ import {
 } from "@/components/design-system";
 import { Search } from "lucide-react";
 
-import { useAppState, MaintenanceTask } from "@/lib/store";
+import { useAppState, MaintenanceTask, useRBAC } from "@/lib/store";
 import { calculatePriority } from "@/lib/intelligence";
 import { useRouter } from "next/navigation";
 
@@ -25,7 +25,25 @@ export default function BacklogPage() {
   const [statusFilter, setStatusFilter] = useState("All");
   const [riskSlider, setRiskSlider] = useState(0);
 
+  const { hasPermission } = useRBAC();
+  const canViewDept = (dept: string) => {
+    if (hasPermission("VIEW_ALL") || hasPermission("ALL")) return true;
+    if (dept === "Engineering" && hasPermission("VIEW_ENGINEERING")) return true;
+    if (dept === "S&T" && hasPermission("VIEW_S&T")) return true;
+    if (dept === "TRD" && hasPermission("VIEW_TRD")) return true;
+    return false;
+  };
+
+  const canSelectDept = (dept: string) => {
+    if (hasPermission("ALL") || hasPermission("OPTIMIZE")) return true;
+    if (dept === "Engineering" && hasPermission("SELECT_ENGINEERING_TASKS")) return true;
+    if (dept === "S&T" && hasPermission("SELECT_S&T_TASKS")) return true;
+    if (dept === "TRD" && hasPermission("SELECT_TRD_TASKS")) return true;
+    return false;
+  };
+
   const filteredTasks = state.tasks.filter(task => {
+    if (!canViewDept(task.department)) return false;
     if (deptFilter !== "All" && task.department !== deptFilter) return false;
     // Map severity to risk levels roughly for filter
     if (severityFilter !== "All" && task.risk !== severityFilter) return false;
@@ -137,14 +155,16 @@ export default function BacklogPage() {
                   <input 
                     type="checkbox" 
                     checked={isSelected}
+                    disabled={!canSelectDept(task.department)}
                     onChange={() => {
+                      if (!canSelectDept(task.department)) return;
                       if (isSelected) {
                         dispatch({ type: "DESELECT_TASK_FOR_PLANNING", payload: task.id });
                       } else {
                         dispatch({ type: "SELECT_TASK_FOR_PLANNING", payload: task.id });
                       }
                     }}
-                    className="w-4 h-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500 cursor-pointer"
+                    className="w-4 h-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
                   />
                 </td>
                 <td className="px-3 py-2 font-mono text-xs font-bold text-red-800">{task.id}</td>
@@ -396,9 +416,12 @@ export default function BacklogPage() {
                 <GovernmentButton 
                   className="flex-1"
                   variant="primary"
+                  disabled={!canSelectDept(selectedTask.department)}
                   onClick={() => {
-                    dispatch({ type: "SELECT_TASK_FOR_PLANNING", payload: selectedTask.id });
-                    router.push('/block-planner');
+                    if (canSelectDept(selectedTask.department)) {
+                      dispatch({ type: "SELECT_TASK_FOR_PLANNING", payload: selectedTask.id });
+                      router.push('/block-planner');
+                    }
                   }}
                 >
                   PLAN THIS TASK
@@ -406,9 +429,12 @@ export default function BacklogPage() {
                 <GovernmentButton 
                   className="flex-1 border-indigo-700 text-indigo-700 hover:bg-indigo-50"
                   variant="outline"
+                  disabled={!canSelectDept(selectedTask.department)}
                   onClick={() => {
-                    dispatch({ type: "SELECT_TASK_FOR_PLANNING", payload: selectedTask.id });
-                    alert("Task added to planning queue.");
+                    if (canSelectDept(selectedTask.department)) {
+                      dispatch({ type: "SELECT_TASK_FOR_PLANNING", payload: selectedTask.id });
+                      alert("Task added to planning queue.");
+                    }
                   }}
                 >
                   ADD TO PLANNING
